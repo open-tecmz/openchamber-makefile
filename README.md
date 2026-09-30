@@ -42,7 +42,12 @@ into a collapsible row. Clicking a row expands it and, the first time, starts
 - **Accordion rows** — click a target to expand it; the first click also runs it.
 - **Search the targets** — filter the list by name or description from the search
   box at the top.
-- **Live output** — stdout and stderr are appended as the target runs.
+- **Live output** — stdout and stderr are appended as the target runs, in a
+  terminal-styled log: ANSI colours are honoured and progress lines that redraw
+  themselves are collapsed to one line.
+- **Your terminal's environment** — the service asks your own shell for its
+  environment once, so the PATH and exports from `~/.zprofile` / `~/.zshrc`
+  (`nvm`, `pyenv`, project variables) reach `make` just like in a terminal.
 - **Status at a glance** — running / done / failed / stopped, with the exit code
   and duration once it finishes.
 - **Stop, rerun, copy, clear** — control a run without leaving the panel.
@@ -120,6 +125,10 @@ Open the **Makefile** panel from the extensions area of the rail:
 A target with no previous run starts on the first click; one that already ran
 just shows its last output until you press **Run again**.
 
+The service asks your shell (`$SHELL`) for its environment once at boot and gives
+it to every run, so a target sees the same `PATH` and exports as it would in your
+terminal.
+
 `contributes.page` also opens the same panel full-screen, which is handy for a
 build with a lot of output.
 
@@ -146,6 +155,10 @@ session data and no project files beyond the makefile.
   proxied request at 20 s, so the service holds each `/events` request for at
   most 15 s and the panel reopens it right away. The panel asks for a 30 s hold,
   which the service clamps to stay under the bridge limit.
+- **The recipe shell is make's own** — the panel imports your environment, not
+  your interpreter: recipes still run under make's default `/bin/sh`. Set `SHELL`
+  in the Makefile (for example `SHELL := /bin/zsh`) when a recipe needs another
+  shell's syntax.
 - **One run per target** — starting a target again replaces its previous output.
 - **Non-public process access** — the service runs under your account with no OS
   sandbox, exactly as the approval dialog warns.

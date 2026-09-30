@@ -264,23 +264,25 @@
       }
       .mf-log {
         margin: 0;
-        padding: 8px 10px;
+        padding: 10px 12px;
         max-height: 320px;
         overflow: auto;
         box-sizing: border-box;
-        background: var(--oc-surface, rgba(127, 127, 127, 0.08));
-        border: 1px solid var(--oc-border);
+        /* A terminal, not a panel: the log keeps its own dark surface in both
+           themes, so ANSI colours always land on the background they assume. */
+        background: #0b0e14;
+        border: 1px solid #262c38;
         border-radius: var(--oc-radius, 8px);
-        color: var(--oc-fg);
+        color: #d4d4d4;
         font-family: var(--oc-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
         font-size: 12px;
-        line-height: 1.45;
+        line-height: 1.5;
         white-space: pre-wrap;
         word-break: break-word;
         tab-size: 4;
       }
       .mf-log-empty {
-        color: var(--oc-muted);
+        color: #67707e;
       }
     </style>
   </head>

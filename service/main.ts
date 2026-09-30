@@ -18,12 +18,16 @@
  *
  * Protocol: the host passes OPENCHAMBER_SERVICE_PORT and
  * OPENCHAMBER_SERVICE_TOKEN; every request needs `Authorization: Bearer <token>`.
+ *
+ * Runs inherit the environment of the user's own shell (see "Shell environment"),
+ * not the host's, so panel runs match terminal runs.
  */
 
 import http from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -276,12 +280,128 @@ const watchDirectory = (directory: string): void => {
 };
 
 // ---------------------------------------------------------------------------
+// Shell environment
+// ---------------------------------------------------------------------------
+
+/**
+ * The host is a GUI process: it starts without the PATH entries and exported
+ * variables a terminal window has (nvm, pyenv, project-specific exports). Ask the
+ * user's own shell for its environment once, then give it to every `make`, so a
+ * run started from the panel sees what a run typed in a terminal sees.
+ *
+ * Interactivity matters as much as login here: tools commonly add their PATH from
+ * `~/.zshrc` / `~/.bashrc`, and only interactive shells read those files. Both
+ * flags are asked for where the shell understands them, and the whole capture is
+ * best-effort — when the shell is missing, hangs or answers with unexpected
+ * output, `make` simply inherits this process's environment as it always did.
+ */
+
+/** Printed by the shell around `env -0`, so the answer can be told from shell noise. */
+const ENV_MARKER = '__openchamber_makefile_env__';
+/** A shell that never answers must not hold a run for long. */
+const SHELL_ENV_TIMEOUT_MS = 5_000;
+
+/**
+ * The shell to ask. `SHELL` is what the host (and a terminal) would use;
+ * `OPENCHAMBER_MAKEFILE_SHELL` overrides it, which is how the tests stand in a
+ * deterministic shell for the user's own.
+ */
+const shellPath = (): string => {
+  if (process.env.OPENCHAMBER_MAKEFILE_SHELL) return process.env.OPENCHAMBER_MAKEFILE_SHELL;
+  if (process.env.SHELL) return process.env.SHELL;
+  try {
+    return os.userInfo().shell || '/bin/sh';
+  } catch {
+    return '/bin/sh';
+  }
+};
+
+/** zsh and bash read their rc file for `-i`; other shells get login only. */
+const shellArgs = (shell: string, script: string): string[] => {
+  const name = path.basename(shell);
+  return name === 'zsh' || name === 'bash' ? ['-l', '-i', '-c', script] : ['-l', '-c', script];
+};
+
+/** Read the `env -0` answer between the two markers; everything else is noise. */
+const parseShellEnv = (text: string): NodeJS.ProcessEnv | null => {
+  const parts = text.split('\0');
+  const start = parts.indexOf(ENV_MARKER);
+  const end = parts.indexOf(ENV_MARKER, start + 1);
+  if (start < 0 || end < 0) return null;
+  const env: NodeJS.ProcessEnv = {};
+  for (const entry of parts.slice(start + 1, end)) {
+    const eq = entry.indexOf('=');
+    if (eq > 0) env[entry.slice(0, eq)] = entry.slice(eq + 1);
+  }
+  return Object.keys(env).length > 0 ? env : null;
+};
+
+const captureShellEnv = (): Promise<NodeJS.ProcessEnv | null> => {
+  // Windows shells take different flags and different syntax; leave that alone.
+  if (process.platform === 'win32') return Promise.resolve(null);
+  const shell = shellPath();
+  // `env -0` separates entries with NUL, so values with spaces or newlines survive.
+  const script = `printf '%s\\0' ${ENV_MARKER}; env -0; printf '%s\\0' ${ENV_MARKER}`;
+
+  return new Promise((resolve) => {
+    let timer: NodeJS.Timeout | undefined;
+    let settled = false;
+    const done = (value: NodeJS.ProcessEnv | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+
+    let child: ChildProcess;
+    try {
+      child = spawn(shell, shellArgs(shell, script), { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      done(null);
+      return;
+    }
+
+    timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      done(null);
+    }, SHELL_ENV_TIMEOUT_MS);
+    timer.unref?.();
+
+    let out = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString();
+    });
+    child.on('error', () => done(null));
+    child.on('close', () => {
+      const env = parseShellEnv(out);
+      if (env) console.error(`[makefile] using the environment of ${shell}`);
+      done(env);
+    });
+  });
+};
+
+let shellEnvPromise: Promise<NodeJS.ProcessEnv | null> | null = null;
+
+/**
+ * The captured environment, resolved once per service run and reused. The capture
+ * starts at boot so the first run does not have to wait for it.
+ */
+const shellEnv = (): Promise<NodeJS.ProcessEnv | null> => {
+  shellEnvPromise ??= captureShellEnv();
+  return shellEnvPromise;
+};
+
+/** This process's environment, with everything the user's shell adds on top. */
+const runEnv = (captured: NodeJS.ProcessEnv | null): NodeJS.ProcessEnv =>
+  captured ? { ...process.env, ...captured } : { ...process.env };
+
+// ---------------------------------------------------------------------------
 // Running make
 // ---------------------------------------------------------------------------
 
 let runSequence = 0;
 
-const startRun = (directory: string, target: string): Run => {
+const startRun = (directory: string, target: string, env: NodeJS.ProcessEnv): Run => {
   const run: Run = {
     id: `run_${Date.now().toString(36)}_${(runSequence += 1).toString(36)}`,
     directory,
@@ -312,7 +432,7 @@ const startRun = (directory: string, target: string): Run => {
 
   let child: ChildProcess;
   try {
-    child = spawn('make', ['--no-print-directory', target], { cwd: directory, env: process.env });
+    child = spawn('make', ['--no-print-directory', target], { cwd: directory, env });
   } catch (error) {
     appendOutput(run, `${error instanceof Error ? error.message : String(error)}\n`);
     finish('failed', null);
@@ -495,7 +615,8 @@ const server = http.createServer((req, res) => {
         json(res, 400, { ok: false, error: 'invalid-request' });
         return;
       }
-      json(res, 200, { ok: true, run: snapshotOf(startRun(directory, target)) });
+      const env = runEnv(await shellEnv());
+      json(res, 200, { ok: true, run: snapshotOf(startRun(directory, target, env)) });
       return;
     }
 
@@ -529,6 +650,9 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1');
+
+// Ask the user's shell for its environment now, so the first run does not wait.
+void shellEnv();
 
 const shutdown = (): void => {
   for (const run of runs.values()) {

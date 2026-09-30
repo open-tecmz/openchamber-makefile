@@ -34,6 +34,7 @@ import type {
   TargetsAnswer,
 } from '../src/makefile.ts';
 import { createTranslator, type Translator } from '../src/i18n.ts';
+import { ansiToHtml, stripAnsi } from '../src/ansi.ts';
 
 const host: HostClient = connectHost({ requestTimeoutMs: 25_000 });
 const root = document.querySelector('#root') as HTMLElement;
@@ -512,7 +513,9 @@ const copyLog = async (target: string): Promise<void> => {
   const view = runs.get(target);
   if (!view?.output) return;
   try {
-    await host.writeClipboard(view.output);
+    // Plain text: the clipboard should not carry escape sequences or the redraw
+    // markers of a progress line.
+    await host.writeClipboard(stripAnsi(view.output));
     await host.toast({ kind: 'success', message: t('toast.copied') });
   } catch {
     await host.toast({ kind: 'error', message: t('toast.copyFailed') });
@@ -630,13 +633,28 @@ const clearDisposables = (): void => {
   while (disposables.length > 0) disposables.pop()?.dispose();
 };
 
+/**
+ * Fill a log element: colourised output when there is any, the muted
+ * placeholder otherwise. The renderer reads the run's whole accumulated output
+ * (it needs the full text to keep an escape sequence that spans two chunks
+ * intact), so this is a full repaint, not an append.
+ */
+const paintLog = (log: HTMLElement, target: string, view: RunView | undefined): void => {
+  const text = view?.output ?? '';
+  if (text) {
+    log.innerHTML = ansiToHtml(text);
+    log.classList.remove('mf-log-empty');
+  } else {
+    log.textContent = logPlaceholder(target, view);
+    log.classList.add('mf-log-empty');
+  }
+};
+
 const syncLog = (target: string): void => {
   const refs = logRefs.get(target);
   if (!refs) return;
   const view = runs.get(target);
-  const text = view?.output ?? '';
-  refs.log.textContent = text || logPlaceholder(target, view);
-  refs.log.classList.toggle('mf-log-empty', !text);
+  paintLog(refs.log, target, view);
   refs.meta.textContent = metaTextFor(target, view);
   refs.status.textContent = headLabelFor(target, view);
   refs.status.className = `mf-status mf-status-${headTone(target, view)}`;
@@ -818,13 +836,8 @@ const renderTarget = (target: MakeTarget): HTMLElement => {
   }));
 
   const log = body.appendChild(el('pre', 'mf-log mf-log-empty'));
-  if (view?.output) {
-    log.textContent = view.output;
-    log.classList.remove('mf-log-empty');
-    if (running) queueMicrotask(() => { log.scrollTop = log.scrollHeight; });
-  } else if (!running || action) {
-    log.textContent = logPlaceholder(target.name, view);
-  }
+  paintLog(log, target.name, view);
+  if (running && view?.output) queueMicrotask(() => { log.scrollTop = log.scrollHeight; });
 
   logRefs.set(target.name, { log, meta, status });
   return item;
