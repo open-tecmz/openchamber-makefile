@@ -7,10 +7,11 @@ Conventions for working in this repository.
 Every change must be recorded in [`changelog.md`](./changelog.md) as part of the
 same change set. A change without a changelog entry is considered incomplete.
 
-- Append entries to the **`## [Unreleased]`** section; create the section if it
-  is missing. Never rewrite or remove an already-released section.
-- One bullet per change, prefixed with `新增：`, `优化：` or `修复：`, followed by
-  a short Chinese description of the effect the user can see.
+- One line per change, formatted `- 新增|优化|修复 YYYY-MM-DD <description>`, and
+  keep the newest entry at the top. There are no version headings or sections.
+- Date each entry with the day you made the change; use `新增` for features,
+  `优化` for improvements and `修复` for fixes, then a short Chinese description
+  of the effect the user can see.
 - Skip trivial or non-functional changes: version bumps and iteration markers,
   and anything that only touches tests, fixtures or dev-only helpers.
 - Keep `changelog.md` in the same commit as the code it describes.
