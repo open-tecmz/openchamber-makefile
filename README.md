@@ -55,8 +55,8 @@ into a collapsible row. Clicking a row expands it and, the first time, starts
   build is not tied to the tab.
 - **Localized panel** — follows the OpenChamber language (English, 简体中文,
   繁體中文).
-- **No project pollution** — nothing is written into the project; logs stay in
-  the service's memory.
+- **No project pollution** — nothing is written into the project; the service's
+  own log stays in `~/.config/openchamber-makefile/logs/`.
 
 ## How it works
 
@@ -89,8 +89,11 @@ The host bridge buffers a service response (there is no streaming call yet), so
 swapping in a real `EventSource` later needs no protocol change.
 
 The service keeps the last 40 runs in memory and caps each run's output, so a
-very chatty target cannot grow without bound. Logs are not written to disk and
-disappear when the service stops.
+very chatty target cannot grow without bound. Its own log — service start,
+requests, runs, makefile changes, shell-environment capture and errors — is
+written to `~/.config/openchamber-makefile/logs/service.log`. A file rolls over
+at 10 MB, with the newest five kept beside it, so a problem can be checked after
+the fact instead of only while the panel is open.
 
 ## Install
 

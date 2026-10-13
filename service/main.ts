@@ -21,6 +21,9 @@
  *
  * Runs inherit the environment of the user's own shell (see "Shell environment"),
  * not the host's, so panel runs match terminal runs.
+ *
+ * Diagnostics are written to a log file under the user's config directory (see
+ * `logger.ts`), kept out of the project and rolled over so it stays readable.
  */
 
 import http from 'node:http';
@@ -40,6 +43,7 @@ import {
   type StreamEvent,
   type StreamFrame,
 } from '../src/makefile.ts';
+import { initLog, logError, logInfo, logPath } from './logger.ts';
 
 const PORT = Number(process.env.OPENCHAMBER_SERVICE_PORT);
 const TOKEN = process.env.OPENCHAMBER_SERVICE_TOKEN ?? '';
@@ -48,6 +52,12 @@ if (!PORT || !TOKEN) {
   console.error('OPENCHAMBER_SERVICE_PORT and OPENCHAMBER_SERVICE_TOKEN are required');
   process.exit(1);
 }
+
+// A log file the user can read after something went wrong; see logger.ts.
+initLog();
+logInfo(
+  `service starting pid=${process.pid} port=${PORT} node=${process.version} platform=${process.platform} log=${logPath() ?? '(off)'}`,
+);
 
 /** Kept per run; the oldest output is dropped past this. */
 const MAX_OUTPUT_CHARS = 400_000;
@@ -252,6 +262,7 @@ const rescanDirectory = async (directory: string): Promise<void> => {
     if (lastTargets.get(directory) === signature) return;
     lastTargets.set(directory, signature);
     emit({ type: 'targets', directory, makefile, targets });
+    logInfo(`targets changed dir=${directory} makefile=${makefile ?? '-'} count=${targets.length}`);
   } catch {
     // the directory (or makefile) went away while we watched it
   }
@@ -374,7 +385,8 @@ const captureShellEnv = (): Promise<NodeJS.ProcessEnv | null> => {
     child.on('error', () => done(null));
     child.on('close', () => {
       const env = parseShellEnv(out);
-      if (env) console.error(`[makefile] using the environment of ${shell}`);
+      if (env) logInfo(`shell environment captured from ${shell}`);
+      else logInfo('shell environment not captured; runs inherit the service environment');
       done(env);
     });
   });
@@ -418,6 +430,7 @@ const startRun = (directory: string, target: string, env: NodeJS.ProcessEnv): Ru
   runOrder.push(run.id);
   evictRuns();
   emit({ type: 'run', directory, run: snapshotOf(run) });
+  logInfo(`run start id=${run.id} target=${target} dir=${directory}`);
 
   let settled = false;
   const finish = (status: RunStatus, code: number | null): void => {
@@ -428,13 +441,18 @@ const startRun = (directory: string, target: string, env: NodeJS.ProcessEnv): Ru
     run.finishedAt = Date.now();
     run.child = null;
     emit({ type: 'run', directory, run: snapshotOf(run) });
+    logInfo(
+      `run ${status} id=${run.id} target=${target} exit=${code ?? '-'} ms=${run.finishedAt - run.startedAt} chars=${totalLength(run)}`,
+    );
   };
 
   let child: ChildProcess;
   try {
     child = spawn('make', ['--no-print-directory', target], { cwd: directory, env });
   } catch (error) {
-    appendOutput(run, `${error instanceof Error ? error.message : String(error)}\n`);
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`run spawn failed id=${run.id} target=${target} dir=${directory}: ${message}`);
+    appendOutput(run, `${message}\n`);
     finish('failed', null);
     return run;
   }
@@ -444,6 +462,7 @@ const startRun = (directory: string, target: string, env: NodeJS.ProcessEnv): Ru
   child.stderr?.on('data', (chunk: Buffer) => appendOutput(run, chunk.toString()));
 
   child.on('error', (error) => {
+    logError(`run process error id=${run.id} target=${target}: ${error.message}`);
     appendOutput(run, `${error.message}\n`);
     finish('failed', null);
   });
@@ -459,6 +478,7 @@ const startRun = (directory: string, target: string, env: NodeJS.ProcessEnv): Ru
 const stopRun = (runId: string): boolean => {
   const run = runs.get(runId);
   if (!run || !run.child || run.status !== 'running') return false;
+  logInfo(`run stop requested id=${run.id} target=${run.target}`);
   run.child.kill('SIGTERM');
   const child = run.child;
   setTimeout(() => {
@@ -539,6 +559,12 @@ const readBody = (req: http.IncomingMessage): Promise<string> => new Promise((re
 });
 
 const server = http.createServer((req, res) => {
+  const startedAt = Date.now();
+  // One line per request, written when the answer is done: method, path, status
+  // and how long the read or idle hold took. This is what a stuck panel shows.
+  res.on('finish', () => {
+    logInfo(`${req.method} ${req.url} ${res.statusCode} ${Date.now() - startedAt}ms`);
+  });
   void (async () => {
     if (req.headers.authorization !== `Bearer ${TOKEN}`) {
       json(res, 401, { error: 'unauthorized' });
@@ -644,17 +670,24 @@ const server = http.createServer((req, res) => {
 
     json(res, 404, { error: 'not-found' });
   })().catch((error) => {
-    console.error('[makefile] request failed', error);
+    logError(
+      `request failed ${req.method} ${req.url}: ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
     json(res, 500, { ok: false, error: error instanceof Error ? error.message : 'failed' });
   });
 });
 
 server.listen(PORT, '127.0.0.1');
 
+server.on('error', (error) => {
+  logError(`server error: ${error.message}`);
+});
+
 // Ask the user's shell for its environment now, so the first run does not wait.
 void shellEnv();
 
 const shutdown = (): void => {
+  logInfo('service stopping');
   for (const run of runs.values()) {
     if (run.status === 'running') run.child?.kill('SIGTERM');
   }
