@@ -1,0 +1,293 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Makefile</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      body {
+        background: var(--oc-bg);
+        color: var(--oc-fg);
+        font: 13px/1.5 var(--oc-font, system-ui, sans-serif);
+      }
+      #root {
+        height: 100%;
+        box-sizing: border-box;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        overflow: hidden;
+      }
+      .mf-header {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: none;
+      }
+      .mf-title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .mf-title {
+        font-weight: 650;
+        font-size: 14px;
+      }
+      .mf-project {
+        color: var(--oc-muted);
+        font-size: 12px;
+        word-break: break-all;
+      }
+      .mf-counts {
+        margin-left: auto;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .mf-makefile {
+        color: var(--oc-muted);
+        font-family: var(--oc-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+        font-size: 11px;
+      }
+      .mf-loading {
+        display: flex;
+        justify-content: center;
+        padding: 16px 0;
+      }
+      .mf-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: none;
+      }
+      .mf-search-input {
+        flex: 1 1 auto;
+        min-width: 0;
+        box-sizing: border-box;
+        padding: 5px 8px;
+        border: 1px solid var(--oc-border);
+        border-radius: var(--oc-radius, 8px);
+        background: var(--oc-surface, rgba(127, 127, 127, 0.06));
+        color: inherit;
+        font: inherit;
+        outline: none;
+      }
+      .mf-search-input::placeholder {
+        color: var(--oc-muted);
+      }
+      .mf-search-input:focus {
+        border-color: var(--oc-primary);
+      }
+      .mf-search-input::-webkit-search-cancel-button {
+        display: none;
+      }
+      .mf-search-clear {
+        flex: none;
+        width: 24px;
+        height: 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: 1px solid var(--oc-border);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--oc-muted);
+        font: inherit;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .mf-search-clear:hover {
+        background: var(--oc-hover);
+        color: var(--oc-fg);
+      }
+      .mf-search-clear:focus-visible {
+        outline: 2px solid var(--oc-primary);
+        outline-offset: -2px;
+      }
+      .mf-list {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--oc-border);
+        border-radius: var(--oc-radius, 8px);
+      }
+      .mf-item + .mf-item {
+        border-top: 1px solid var(--oc-border);
+      }
+      .mf-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 8px 10px;
+        margin: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .mf-head:hover {
+        background: var(--oc-hover);
+      }
+      .mf-head:focus-visible {
+        outline: 2px solid var(--oc-primary);
+        outline-offset: -2px;
+      }
+      .mf-chevron {
+        flex: none;
+        color: var(--oc-muted);
+        transition: transform 120ms ease;
+      }
+      .mf-item.mf-open .mf-chevron {
+        transform: rotate(90deg);
+      }
+      .mf-name {
+        font-family: var(--oc-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+        font-weight: 600;
+        flex: none;
+      }
+      .mf-tags {
+        display: flex;
+        gap: 4px;
+        flex: none;
+      }
+      .mf-tag {
+        font-size: 10px;
+        line-height: 1;
+        padding: 3px 5px;
+        border-radius: 999px;
+        border: 1px solid var(--oc-border);
+        color: var(--oc-muted);
+      }
+      .mf-tag-default {
+        border-color: var(--oc-primary);
+        color: var(--oc-primary);
+      }
+      .mf-desc {
+        flex: 1 1 auto;
+        min-width: 0;
+        color: var(--oc-muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .mf-status {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        color: var(--oc-muted);
+      }
+      .mf-status::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--oc-muted);
+      }
+      .mf-status-running {
+        color: var(--oc-primary);
+      }
+      .mf-status-running::before {
+        background: var(--oc-primary);
+        animation: mf-pulse 1s ease-in-out infinite;
+      }
+      .mf-status-pending {
+        color: var(--oc-primary);
+      }
+      .mf-status-pending::before {
+        background: var(--oc-primary);
+        animation: mf-pulse 1s ease-in-out infinite;
+      }
+      .mf-status-success::before {
+        background: var(--oc-success, #2ea043);
+      }
+      .mf-status-failed {
+        color: var(--oc-error);
+      }
+      .mf-status-failed::before {
+        background: var(--oc-error);
+      }
+      .mf-status-stopped::before {
+        background: var(--oc-warning, #d29922);
+      }
+      @keyframes mf-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .mf-body {
+        display: none;
+        padding: 0 10px 10px;
+      }
+      .mf-item.mf-open .mf-body {
+        display: block;
+      }
+      .mf-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0 8px;
+      }
+      .mf-meta {
+        flex: 1 1 auto;
+        min-width: 0;
+        color: var(--oc-muted);
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .mf-actions {
+        display: flex;
+        gap: 4px;
+        flex: none;
+      }
+      .mf-log {
+        margin: 0;
+        padding: 10px 12px;
+        max-height: 320px;
+        overflow: auto;
+        box-sizing: border-box;
+        /* A terminal, not a panel: the log keeps its own dark surface in both
+           themes, so ANSI colours always land on the background they assume. */
+        background: #0b0e14;
+        border: 1px solid #262c38;
+        border-radius: var(--oc-radius, 8px);
+        color: #d4d4d4;
+        font-family: var(--oc-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        tab-size: 4;
+      }
+      .mf-log-empty {
+        color: #67707e;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="main.js"></script>
+  </body>
+</html>
